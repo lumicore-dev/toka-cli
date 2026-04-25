@@ -1,0 +1,11 @@
+import build::{Library, run_build}
+
+fn main() {
+    auto lib = Library(
+        name = "toka-cli",
+        version = "0.1.0",
+        src = "lib/toka-cli/mod.tk",
+        deps = String::from("")
+    )
+    run_build(lib)
+}

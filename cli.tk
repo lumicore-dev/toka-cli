@@ -1,0 +1,438 @@
+// toka-cli - Command-line argument parser for Toka
+//
+// A lightweight, zero-dependency argument parsing library.
+// Supports flags, options with values, positional args, and auto --help.
+//
+// Usage:
+//   import cli::{Cli}
+//
+//   fn main() -> i32 {
+//       auto app# = Cli::new("myapp", "0.1.0", "A great CLI tool")
+//       app#.add_flag("verbose", 'v', "verbose", "Enable verbose output")
+//       app#.add_option("output", 'o', "output", "Output file path", "out.txt", false)
+//
+//       auto raw = args()
+//       if !app.parse(raw) { return 0 }
+//       if app.has("verbose") { println("verbose!\n") }
+//       auto out = app.get("output")
+//       return 0
+//   }
+
+import core/option::Option
+import std/string::String
+import std/vec::Vec
+import std/io::{println, print_line}
+
+// ==========================================
+// Arg Definition
+// ==========================================
+
+/// Defines a single command-line argument (flag, option, or positional).
+pub shape Arg (
+    name: String,
+    short: char,
+    long: String,
+    help: String,
+    default_val: String,
+    is_flag: bool,
+    is_positional: bool,
+    required: bool,
+)
+
+impl Arg {
+    /// Create a flag (e.g. -v / --verbose), no value needed
+    pub fn flag(name: String, short: char, long: String, help: String) -> Arg {
+        return Arg(name=name, short=short, long=long, help=help,
+                   default_val=String::from(""), is_flag=true,
+                   is_positional=false, required=false)
+    }
+
+    /// Create an option that takes a value (e.g. -o file / --output file)
+    pub fn option(name: String, short: char, long: String, help: String,
+                  default_val: String, required: bool) -> Arg {
+        return Arg(name=name, short=short, long=long, help=help,
+                   default_val=default_val, is_flag=false,
+                   is_positional=false, required=required)
+    }
+
+    /// Create a positional argument
+    pub fn positional(name: String, help: String) -> Arg {
+        return Arg(name=name, short=0:char, long=String::from(""), help=help,
+                   default_val=String::from(""), is_flag=true,
+                   is_positional=true, required=false)
+    }
+}
+
+// Workaround for Toka String::eq bug (all strings starting with '-' compare equal)
+fn str_eq(a: String, b: String) -> bool {
+    return a.as_str().eq(b.as_str())
+}
+
+fn str_eq_view(a: String, b_view: view_str) -> bool {
+    return a.as_str().eq(b_view)
+}
+
+// ==========================================
+// Main Cli Parser
+// ==========================================
+
+/// The main CLI application parser.
+pub shape Cli (
+    definitions: Vec<Arg>,
+    values: Vec<String>,
+    flags_set: Vec<String>,
+    positional_vals: Vec<String>,
+    app_name: String,
+    app_version: String,
+    app_about: String,
+)
+
+impl Cli {
+    /// Create a new CLI application
+    pub fn new(name: String, version: String, about: String) -> Cli {
+        return Cli(
+            definitions=Vec<Arg>::new(),
+            values=Vec<String>::new(),
+            flags_set=Vec<String>::new(),
+            positional_vals=Vec<String>::new(),
+            app_name=name, app_version=version, app_about=about
+        )
+    }
+
+    /// Register a flag (no value needed)
+    pub fn add_flag(self#, name: String, short: char, long: String, help: String) {
+        self.definitions#.push(Arg::flag(name, short, long, help))
+    }
+
+    /// Register an option (takes a value)
+    pub fn add_option(self#, name: String, short: char, long: String, help: String,
+                      default_val: String, required: bool) {
+        self.definitions#.push(Arg::option(name, short, long, help, default_val, required))
+    }
+
+    /// Register a positional argument
+    pub fn add_positional(self#, name: String, help: String) {
+        self.definitions#.push(Arg::positional(name, help))
+    }
+
+    // ==========================================
+    // Parsing
+    // ==========================================
+
+    /// Parse command-line arguments. Returns true on success, false on --help/error.
+    pub fn parse(self#, raw: Vec<String>) -> bool {
+        auto def_count = self.definitions.len()
+        auto dash_h = String::from("-h")
+        auto dash_cap_v = String::from("-V")
+        auto dash_dash = String::from("--")
+        auto eq_str = String::from("=")
+        auto help_str = String::from("--help")
+        auto version_str = String::from("--version")
+
+        // Initialize values with defaults
+        auto i# = 0:usize
+        while i < def_count {
+            auto def = self.definitions.get(i)
+            self.values#.push(def.default_val.clone())
+            i = i + 1
+        }
+
+        auto raw_len = raw.len()
+        auto pos# = 1:usize   // skip program name
+
+        while pos < raw_len {
+            auto arg = raw.get(pos)
+
+            // --help / -h (using view_str comparison to avoid String::eq bug)
+            if str_eq(arg, help_str) || str_eq(arg, dash_h) {
+                self.print_help()
+                return false
+            }
+
+            // --version / -V
+            if str_eq(arg, version_str) || str_eq(arg, dash_cap_v) {
+                println("{} v{}", self.app_name.as_str(), self.app_version.as_str())
+                println("")
+                return false
+            }
+
+            // -- end of options
+            if str_eq(arg, dash_dash) {
+                pos = pos + 1
+                while pos < raw_len {
+                    self.positional_vals#.push(raw.get(pos))
+                    pos = pos + 1
+                }
+                break
+            }
+
+            // Long option: --xxx or --xxx=val
+            if arg.starts_with(dash_dash) {
+                auto eq_pos = arg.find_str(eq_str)
+                auto arg_len = arg.len()
+
+                if eq_pos > 0 {
+                    // --output=file.txt
+                    auto opt_name = arg.substring(2, eq_pos)
+                    auto opt_val = arg.substring(eq_pos + 1, arg_len as i32)
+                    self#.set_value(opt_name, opt_val)
+                } else {
+                    auto opt_name = arg.substring(2, arg_len as i32)
+                    if self#.is_flag_def(opt_name) {
+                        self#.set_flag(opt_name)
+                    } else {
+                        pos = pos + 1
+                        if pos >= raw_len {
+                            println("error: option '--{}' requires a value", opt_name.as_str())
+                            println("Try '--help' for more information.")
+                            return false
+                        }
+                        auto opt_val = raw.get(pos)
+                        self#.set_value(opt_name, opt_val)
+                    }
+                }
+            }
+            // Short option: -x or -x val
+            else if arg.starts_with_char('-' as char) {
+                auto view = arg.as_view()
+                auto opt_char_opt = view.at(1)
+                if opt_char_opt.is_some() {
+                    auto opt_char = opt_char_opt.unwrap()
+                    if self#.is_flag_short(opt_char) {
+                        self#.set_flag_short(opt_char)
+                    } else {
+                        pos = pos + 1
+                        if pos >= raw_len {
+                            println("error: option '-{}' requires a value", opt_char)
+                            println("Try '--help' for more information.")
+                            return false
+                        }
+                        auto opt_val = raw.get(pos)
+                        self#.set_value_short(opt_char, opt_val)
+                    }
+                }
+            }
+            // Positional argument
+            else {
+                self.positional_vals#.push(arg)
+            }
+
+            pos = pos + 1
+        }
+
+        // Check required options
+        i = 0:usize
+        while i < def_count {
+            auto def = self.definitions.get(i)
+            if def.required && !def.is_flag {
+                auto val = self.values.get(i)
+                if val.len() == 0:usize {
+                    println("error: option '--{}' is required", def.name.as_str())
+                    println("Try '--help' for more information.")
+                    return false
+                }
+            }
+            i = i + 1
+        }
+
+        return true
+    }
+
+    // ==========================================
+    // Query Methods
+    // ==========================================
+
+    /// Check if a flag was explicitly set
+    pub fn has(self, name: String) -> bool {
+        auto len = self.flags_set.len()
+        auto i# = 0:usize
+        while i < len {
+            if str_eq(self.flags_set.get(i), name) {
+                return true
+            }
+            i = i + 1
+        }
+        return false
+    }
+
+    /// Get the value of an option or positional argument
+    pub fn get(self, name: String) -> String {
+        auto len = self.definitions.len()
+        auto i# = 0:usize
+        while i < len {
+            auto def = self.definitions.get(i)
+            if str_eq(def.name, name) {
+                return self.values.get(i).clone()
+            }
+            i = i + 1
+        }
+        return String::from("")
+    }
+
+    /// Get positional argument by index
+    pub fn get_positional(self, index: i32) -> String {
+        auto idx = index as usize
+        if idx < self.positional_vals.len() {
+            return self.positional_vals.get(idx).clone()
+        }
+        return String::from("")
+    }
+
+    /// Get all positional arguments
+    pub fn positionals(self) -> Vec<String> {
+        return self.positional_vals.clone()
+    }
+
+    // ==========================================
+    // Help
+    // ==========================================
+
+    /// Print help message
+    pub fn print_help(self) {
+        println("{} v{}", self.app_name.as_str(), self.app_version.as_str())
+        println("{}", self.app_about.as_str())
+        println("")
+        println("Usage: {} [OPTIONS]", self.app_name.as_str())
+        println("")
+
+        auto def_count = self.definitions.len()
+
+        // Print positional args in usage
+        auto i# = 0:usize
+        while i < def_count {
+            auto def = self.definitions.get(i)
+            if def.is_positional {
+                println("       {} <{}>", self.app_name.as_str(), def.name.as_str())
+            }
+            i = i + 1
+        }
+
+        println("")
+        println("Options:")
+        println("")
+        println("  -h, --help       Print help")
+        println("")
+        println("  -V, --version    Print version")
+        println("")
+
+        // Print defined args
+        i = 0:usize
+        while i < def_count {
+            auto def = self.definitions.get(i)
+            if def.is_positional {
+                i = i + 1
+                continue
+            }
+
+            auto line# = String::from("  ")
+
+            if def.short != 0:char {
+                line#.push_char('-')
+                line#.push_char(def.short)
+                line#.push_str(", --" as *char)
+            } else {
+                line#.push_str("     --" as *char)
+            }
+
+            line#.push_str(def.name.c_str())
+
+            if !def.is_flag {
+                line#.push_str(" <value>" as *char)
+            }
+
+            while line#.len() < 30:usize {
+                line#.push_char(' ' as char)
+            }
+
+            line#.push_str(def.help.c_str())
+
+            if def.default_val.len() > 0:usize && !def.is_flag {
+                line#.push_str(" [default: " as *char)
+                line#.push_str(def.default_val.c_str())
+                line#.push_char(']' as char)
+            }
+
+            if def.required {
+                line#.push_str(" [required]" as *char)
+            }
+
+            print_line(line)
+            println("")
+            i = i + 1
+        }
+    }
+
+    // ==========================================
+    // Internal Helpers
+    // ==========================================
+
+    /// Find definition index by name
+    fn find_def(self, name: String) -> i32 {
+        auto len = self.definitions.len()
+        auto i# = 0:usize
+        while i < len {
+            if str_eq(self.definitions.get(i).name, name) {
+                return i as i32
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    /// Find definition index by short char
+    fn find_def_by_short(self, c: char) -> i32 {
+        auto len = self.definitions.len()
+        auto i# = 0:usize
+        while i < len {
+            if self.definitions.get(i).short == c {
+                return i as i32
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    /// Check if argument is a flag (by name)
+    fn is_flag_def(self, name: String) -> bool {
+        auto idx = self.find_def(name)
+        if idx < 0 { return true }
+        return self.definitions.get(idx as usize).is_flag
+    }
+
+    /// Check if argument is a flag (by short char)
+    fn is_flag_short(self, c: char) -> bool {
+        auto idx = self.find_def_by_short(c)
+        if idx < 0 { return true }
+        return self.definitions.get(idx as usize).is_flag
+    }
+
+    /// Mark a flag as set (by name)
+    fn set_flag(self#, name: String) {
+        self.flags_set#.push(name)
+    }
+
+    /// Mark a flag as set (by short char)
+    fn set_flag_short(self#, c: char) {
+        auto idx = self.find_def_by_short(c)
+        if idx >= 0 {
+            auto name = self.definitions.get(idx as usize).name.clone()
+            self.flags_set#.push(name)
+        }
+    }
+
+    /// Set an option value (by name)
+    fn set_value(self#, name: String, val: String) {
+        auto idx = self.find_def(name)
+        if idx >= 0 {
+            self.values#.set(idx as usize, val)
+        }
+    }
+
+    /// Set an option value (by short char)
+    fn set_value_short(self#, c: char, val: String) {
+        auto idx = self.find_def_by_short(c)
+        if idx >= 0 {
+            self.values#.set(idx as usize, val)
+        }
+    }
+}

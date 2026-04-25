@@ -1,0 +1,52 @@
+// toka-cli Demo
+import cli::{Cli}
+import std/string::String
+import std/io::println
+import std/env::args
+
+pub fn main() -> i32 {
+    auto app# = Cli::new(String::from("demo"), String::from("0.1.0"),
+                         String::from("A demo CLI app for toka-cli"))
+
+    app#.add_flag(String::from("verbose"), 'v', String::from("verbose"),
+                  String::from("Enable verbose output"))
+    app#.add_flag(String::from("debug"), 'd', String::from("debug"),
+                  String::from("Enable debug mode"))
+    app#.add_option(String::from("output"), 'o', String::from("output"),
+                    String::from("Output file path"), String::from("out.txt"), false)
+    app#.add_option(String::from("count"), 'c', String::from("count"),
+                    String::from("Number of times"), String::from("1"), false)
+    app#.add_positional(String::from("file"), String::from("Input file to process"))
+
+    auto raw = args()
+    auto ok = app#.parse(raw)
+    if !ok {
+        return 0
+    }
+
+    println("=== Parsed Results ===\n")
+
+    if app.has(String::from("verbose")) {
+        println("  Verbose: true\n")
+    } else {
+        println("  Verbose: false\n")
+    }
+
+    if app.has(String::from("debug")) {
+        println("  Debug: true\n")
+    }
+
+    auto out = app.get(String::from("output"))
+    println("  Output: {}\n", out.as_str())
+
+    auto count = app.get(String::from("count"))
+    println("  Count: {}\n", count.as_str())
+
+    auto file = app.get(String::from("file"))
+    if file.len() > 0:usize {
+        println("  File: {}\n", file.as_str())
+    }
+
+    println("=== Done ===\n")
+    return 0
+}

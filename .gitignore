@@ -1,0 +1,12 @@
+# Binaries
+*.o
+demo/demo
+
+# Debug / build artifacts
+*.tk~
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
