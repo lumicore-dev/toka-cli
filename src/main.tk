@@ -1,0 +1,51 @@
+// toka-cli - Entry point for `toka run`
+// Demonstrates the CLI argument parser.
+
+import cli::{Cli}
+import std/string::String
+import std/io::println
+import std/env::args
+
+fn main() -> i32 {
+    auto app# = Cli::new(
+        String::from("toka-cli"),
+        String::from("0.1.0"),
+        String::from("A lightweight CLI argument parser for Toka")
+    )
+
+    app#.add_flag(
+        String::from("verbose"), 'v',
+        String::from("verbose"),
+        String::from("Enable verbose output")
+    )
+    app#.add_option(
+        String::from("output"), 'o',
+        String::from("output"),
+        String::from("Output file path"),
+        String::from("out.txt"), false
+    )
+    app#.add_positional(
+        String::from("file"),
+        String::from("Input file")
+    )
+
+    auto raw = args()
+    if !app#.parse(raw) {
+        return 0
+    }
+
+    println("toka-cli v0.1.0\n")
+
+    if app.has(String::from("verbose")) {
+        println("  verbose: true")
+    }
+    auto out = app.get(String::from("output"))
+    println("  output: {}", out.as_str())
+
+    auto file = app.get_positional(0)
+    if file.len() > 0:usize {
+        println("  file: {}", file.as_str())
+    }
+
+    return 0
+}

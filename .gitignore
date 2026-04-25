@@ -1,5 +1,6 @@
 # Binaries
 *.o
+target/
 demo/demo
 
 # Debug / build artifacts
