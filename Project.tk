@@ -1,11 +1,53 @@
-import build::{Library, run_build}
+// toka-cli - Project entry point
+// Run with: TOKA_LIB=/path/to/toka/lib toka run
+//
+// This runs a quick smoke test of the CLI parser.
 
-fn main() {
-    auto lib = Library(
-        name = "toka-cli",
-        version = "0.1.0",
-        src = "lib/toka-cli/mod.tk",
-        deps = String::from("")
+import cli::{Cli}
+import std/string::String
+import std/io::println
+import std/env::args
+
+pub fn main() -> i32 {
+    auto app# = Cli::new(
+        String::from("toka-cli"),
+        String::from("0.1.0"),
+        String::from("A lightweight CLI argument parser for Toka")
     )
-    run_build(lib)
+
+    app#.add_flag(
+        String::from("verbose"), 'v',
+        String::from("verbose"),
+        String::from("Enable verbose output")
+    )
+    app#.add_option(
+        String::from("output"), 'o',
+        String::from("output"),
+        String::from("Output file path"),
+        String::from("out.txt"), false
+    )
+    app#.add_positional(
+        String::from("file"),
+        String::from("Input file")
+    )
+
+    auto raw = args()
+    if !app#.parse(raw) {
+        return 0
+    }
+
+    println("toka-cli v0.1.0 smoke test passed!\n")
+
+    if app.has(String::from("verbose")) {
+        println("  verbose: true")
+    }
+    auto out = app.get(String::from("output"))
+    println("  output: {}", out.as_str())
+
+    auto file = app.get_positional(0)
+    if file.len() > 0:usize {
+        println("  file: {}", file.as_str())
+    }
+
+    return 0
 }
